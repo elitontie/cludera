@@ -1,0 +1,76 @@
+CREATE EXTERNAL TABLE log_intermediario (
+    ip STRING,
+    data STRING,
+    metodo STRING,
+    url STRING,
+    http_versao STRING,
+    codigo1 STRING,
+    codigo2 STRING,
+    traco STRING,
+    navegador_sistema STRING)
+ROW FORMAT SERDE 'org.apache.hadoop.hive.contrib.serde2.RegexSerDe'
+WITH SERDEPROPERTIES (
+    'input.regex' = '([^ ]*) - - \\[([^\\]]*)\\] "([^\ ]*) ([^\ ]*) ([^\ ]*)" (\\d*) (\\d*) "([^"]*)" "([^"]*)"',
+    'output.format.string' = "%1$$s %2$$s %3$$s %4$$s %5$$s %6$$s %7$$s %8$$s %9$$s")
+LOCATION '/user/hive/warehouse/log';
+
+==========================================================================================
+
+
+CREATE EXTERNAL TABLE log (
+    ip STRING,
+    data STRING,
+    url STRING,
+    navegador_sistema STRING)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+LOCATION '/user/hive/warehouse/log';
+
+ADD JAR /usr/lib/hive/lib/hive-contrib.jar;
+
+INSERT OVERWRITE TABLE log SELECT ip, data, url, navegador_sistema FROM log_intermediario;
+
+==========================================================================================
+
+
+invalidate metadata;
+
+
+CREATE TABLE flatten_visualizacoes (id bigint, data_visualizacao string, hora string, produto string, navegador_sistema string, 
+total_visualizacoes bigint);
+
+insert into table flatten_visualizacoes
+select  row_number() over(order by count(*) desc) as id,
+        substring(`data`,1,11) as data_visualizacao,
+        substring(`data`,13,8) as hora,
+        replace(replace(substring(url, instr(url,'product',1) + 8, 100),'%20', ' '),'/add_to_cart','') as produto,
+        substring(navegador_sistema,14,instr(navegador_sistema,';',1)-14) as sistema_operacional,
+        count(*) as visualizacoes_produto
+    from default.log
+    where url like '%\/product\/%'
+    group by substring(`data`,1,11), substring(`data`,13,8), replace(replace(substring(url, instr(url,'product',1) + 8, 100),'%20', ' '),'/add_to_cart',
+    ''), substring(navegador_sistema,14,instr(navegador_sistema,';',1)-14)
+    order by count(*) desc;
+
+
+SELECT * FROM flatten_visualizacoes;
+
+
+==========================================================================================
+
+
+CREATE EXTERNAL TABLE flatten_visualizacoes_hive (
+    id bigint,
+    data_visualizacao STRING,
+    hora STRING,
+    produto STRING,
+    navegador_sistema STRING,
+    total_visualizacoes bigint)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+LOCATION '/user/hive/warehouse/log';
+
+ADD JAR /usr/lib/hive/lib/hive-contrib.jar;
+
+INSERT OVERWRITE TABLE flatten_visualizacoes_hive SELECT id, data_visualizacao, hora, produto, navegador_sistema, total_visualizacoes
+FROM flatten_visualizacoes;
+
+==========================================================================================
